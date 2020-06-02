@@ -1,0 +1,14 @@
+{
+  "name": "fr.openent~sqool~1.0-SNAPSHOT",
+  "config": {
+    "main" : "fr.openent.sqool.Sqool",
+    "port" : 8057,
+    "host": "${host}",
+    "ssl" : $ssl,
+    "auto-redeploy": false,
+    "userbook-host": "${host}",
+    "mode" : "${mode}",
+    "publicConf": {
+    }
+  }
+}
