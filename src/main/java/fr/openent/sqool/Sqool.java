@@ -19,10 +19,15 @@
 
 package fr.openent.sqool;
 
+import java.text.ParseException;
+
 import org.entcore.common.http.BaseServer;
+import org.entcore.common.validation.ValidationException;
 
 import fr.openent.sqool.controllers.SqoolController;
 import fr.openent.sqool.services.impl.DefaultSqoolService;
+import fr.openent.sqool.services.impl.SyncAD;
+import fr.wseduc.cron.CronTrigger;
 
 public class Sqool extends BaseServer {
 
@@ -33,6 +38,17 @@ public class Sqool extends BaseServer {
 		final SqoolController sqoolController = new SqoolController();
 		sqoolController.setSqoolService(new DefaultSqoolService());
 		addController(sqoolController);
+
+		final String syncCron = config.getString("sync-cron");
+		if (syncCron != null) {
+			try {
+				new CronTrigger(vertx, syncCron).schedule(new SyncAD(vertx));
+			} catch (ValidationException ex) {
+				log.error("Invalid configuration for sync AD task", ex);
+			} catch (ParseException e) {
+				log.error("Error parsing quartz expression for sync AD", e);
+			}
+		}
 	}
 
 }
