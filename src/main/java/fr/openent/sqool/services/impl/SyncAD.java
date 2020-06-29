@@ -6,6 +6,7 @@ import java.util.UUID;
 
 import org.entcore.common.validation.ValidationException;
 
+import fr.wseduc.webutils.Utils;
 import io.reactiverse.pgclient.PgClient;
 import io.reactiverse.pgclient.PgPool;
 import io.reactiverse.pgclient.PgPoolOptions;
@@ -114,7 +115,7 @@ public class SyncAD implements Handler<Long> {
 
     private void extract(Handler<AsyncResult<PgRowSet>> handler) {
         final String query =
-                "SELECT e.id as id, date, login, password, event_type, e.profile as profile, u.external_id as external_id " +
+                "SELECT e.id as id, date, login, login_alias, password, event_type, e.profile as profile, u.external_id as external_id " +
                 "FROM events.auth_events e " +
                 "LEFT JOIN repository.users u on e.user_id = u.id " +
                 "WHERE sync IS NULL AND e.platform_id = $1 " +
@@ -129,11 +130,18 @@ public class SyncAD implements Handler<Long> {
             final JsonObject event = new JsonObject()
                 .put("id", row.getValue("id").toString())
                 .put("date", row.getValue("date").toString())
-                .put("external_id", row.getString("external_id"))
-                .put("login", row.getString("login"))
-                .put("login", row.getString("password"))
+                .put("userId", row.getString("external_id"))
                 .put("event-type", row.getString("event_type"))
                 .put("profile", row.getString("profile"));
+            if (Utils.isNotEmpty(row.getString("password"))) {
+                event.put("password", row.getString("password"));
+            }
+            if (Utils.isNotEmpty(row.getString("login"))) {
+                event.put("login", row.getString("login"));
+            }
+            if (Utils.isNotEmpty(row.getString("login_alias"))) {
+                event.put("login-alias", row.getString("login_alias"));
+            }
             events.add(event);
             tuples.add(Tuple.of(row.getValue("id")));
         }
