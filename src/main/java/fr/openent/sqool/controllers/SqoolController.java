@@ -39,7 +39,7 @@ public class SqoolController extends BaseController {
     @SecuredAction(value = "", type = ActionType.RESOURCE)
     @ResourceFilter(SuperAdminFilter.class)
     public void exportStructure(HttpServerRequest request) {
-        sqoolService.export(request.params().get("UAI"), arrayResponseHandler(request));
+        sqoolService.export(request.params().get("UAI"), request.params().get("profile"), request.params().get("level"), arrayResponseHandler(request));
     }
 
     public void setSqoolService(SqoolService sqoolService) {
