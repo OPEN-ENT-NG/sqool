@@ -169,7 +169,8 @@ public class SyncAD implements Handler<Long> {
                         handler.handle(Future.succeededFuture(t));
                     });
                 } else {
-                    handler.handle(Future.failedFuture(new ValidationException("invalid.status.code")));
+                    resp.bodyHandler(body -> log.error("body resp error" + body.toString()));
+                    handler.handle(Future.failedFuture(new ValidationException("invalid.status.code : " + resp.statusCode())));
                 }
             });
             req.headers()
@@ -178,6 +179,7 @@ public class SyncAD implements Handler<Long> {
                     .add("Authorization", authorizationHeader);
             req.exceptionHandler(Future::failedFuture);
             req.setTimeout(timeout);
+            log.info("send payload : " + events.encode());
             req.end(events.encode());
         }
     }
