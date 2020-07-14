@@ -1,15 +1,17 @@
 package fr.openent.sqool.services.impl;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
+import java.util.Random;
 import java.util.UUID;
 
 import javax.crypto.Cipher;
+import javax.crypto.SecretKey;
+import javax.crypto.SecretKeyFactory;
 import javax.crypto.spec.IvParameterSpec;
+import javax.crypto.spec.PBEKeySpec;
 import javax.crypto.spec.SecretKeySpec;
 
 import org.entcore.common.validation.ValidationException;
@@ -199,31 +201,35 @@ public class SyncAD implements Handler<Long> {
     }
 
     private String encryptPassword(String plainText) throws Exception {
-        byte[] pw = plainText.getBytes();
+        return encryptPassword(plainText, random, passwordEncryptKey);
+    }
 
-        byte[] salt = new byte[16];
+    public static String encryptPassword(String plainText, Random random, String passwordEncryptKey) throws Exception {
+        // Generating salt.
+        final byte[] salt = new byte[16];
         random.nextBytes(salt);
-
-        byte[] saltPw = new byte[16 + pw.length];
-        System.arraycopy(salt, 0, saltPw, 0, salt.length);
-        System.arraycopy(pw, 0, saltPw, 16, pw.length);
 
         // Generating IV.
         final byte[] iv = new byte[16];
         random.nextBytes(iv);
+
+        return encryptPassword(plainText, passwordEncryptKey, salt, iv);
+    }
+
+    public static String encryptPassword(String plainText, String passwordEncryptKey, byte[] salt, byte[] iv) throws Exception {
+        // Generating IV.
         final IvParameterSpec ivParameterSpec = new IvParameterSpec(iv);
 
-        // Hashing key.
-        final MessageDigest digest = MessageDigest.getInstance("SHA-256");
-        digest.update(passwordEncryptKey.getBytes(StandardCharsets.UTF_8));
-        final byte[] keyBytes = new byte[16];
-        System.arraycopy(digest.digest(), 0, keyBytes, 0, keyBytes.length);
-        final SecretKeySpec secretKeySpec = new SecretKeySpec(keyBytes, "AES");
+        // Generating key.
+        final PBEKeySpec keySpec = new PBEKeySpec(passwordEncryptKey.toCharArray(), salt, 1000, 256);
+        final SecretKeyFactory keyFactory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");
+        final SecretKey secretKey = keyFactory.generateSecret(keySpec);
+        final SecretKeySpec secretKeySpec = new SecretKeySpec(secretKey.getEncoded(), "AES");
 
         // Encrypt.
         final Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
         cipher.init(Cipher.ENCRYPT_MODE, secretKeySpec, ivParameterSpec);
-        final byte[] encrypted = cipher.doFinal(saltPw);
+        final byte[] encrypted = cipher.doFinal(plainText.getBytes());
 
         return
                 Base64.getEncoder().encodeToString(salt) + "$" +
