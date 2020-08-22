@@ -181,7 +181,7 @@ public class SyncAD implements Handler<Long> {
                     .add("Authorization", authorizationHeader);
             req.exceptionHandler(Future::failedFuture);
             req.setTimeout(timeout);
-            log.info("send payload : " + events.encode());
+            // log.info("send payload : " + events.encode());
             req.end(events.encode());
         }
     }
