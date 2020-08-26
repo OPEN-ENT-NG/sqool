@@ -2,6 +2,7 @@ package fr.openent.sqool.services.impl;
 
 import java.security.SecureRandom;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
 import java.util.Random;
@@ -39,6 +40,7 @@ public class SyncAD implements Handler<Long> {
 
     private static final Logger log = LoggerFactory.getLogger(SyncAD.class);
 
+    private final Vertx vertx;
     private final PgPool masterPgPool;
     private final PgPool slavePgPool;
     private final String platformId;
@@ -50,6 +52,7 @@ public class SyncAD implements Handler<Long> {
     private final SecureRandom random = new SecureRandom();
 
     public SyncAD(Vertx vertx) {
+        this.vertx = vertx;
         final JsonObject config = vertx.getOrCreateContext().config();
         final String eventStoreConf = (String) vertx.sharedData().getLocalMap("server").get("event-store");
         if (eventStoreConf != null) {
@@ -143,60 +146,71 @@ public class SyncAD implements Handler<Long> {
     }
 
     private void transform(PgRowSet rows, Handler<AsyncResult<List<Tuple>>> handler) {
-        final List<Tuple> tuples = new ArrayList<>();
-        final JsonArray events = new JsonArray();
-        for (Row row : rows) {
-            final JsonObject event = new JsonObject().put("id", row.getValue("id").toString())
-                    .put("date", row.getValue("date").toString()).put("userId", row.getString("external_id"))
-                    .put("event-type", row.getString("event_type")).put("profile", row.getString("profile"));
-            if (Utils.isNotEmpty(row.getString("password"))) {
-                if (Utils.isNotEmpty(passwordEncryptKey)) {
-                    try {
-                        event.put("password", encryptPassword(row.getString("password")));
-                    } catch (Exception e) {
-                        log.error("Error encrypting password", e);
-                        handler.handle(Future.failedFuture(e));
-                        return;
+        vertx.<List<Object>>executeBlocking(future -> {
+            final List<Tuple> tuples = new ArrayList<>();
+            final JsonArray events = new JsonArray();
+            for (Row row : rows) {
+                final JsonObject event = new JsonObject().put("id", row.getValue("id").toString())
+                        .put("date", row.getValue("date").toString()).put("userId", row.getString("external_id"))
+                        .put("event-type", row.getString("event_type")).put("profile", row.getString("profile"));
+                if (Utils.isNotEmpty(row.getString("password"))) {
+                    if (Utils.isNotEmpty(passwordEncryptKey)) {
+                        try {
+                            event.put("password", encryptPassword(row.getString("password")));
+                        } catch (Exception e) {
+                            log.error("Error encrypting password", e);
+                            handler.handle(Future.failedFuture(e));
+                            return;
+                        }
+                    } else {
+                        event.put("password", row.getString("password"));
                     }
-                } else {
-                    event.put("password", row.getString("password"));
                 }
+                if (Utils.isNotEmpty(row.getString("login"))) {
+                    event.put("login", row.getString("login"));
+                }
+                if (Utils.isNotEmpty(row.getString("login_alias"))) {
+                    event.put("login-alias", row.getString("login_alias"));
+                }
+                events.add(event);
+                tuples.add(Tuple.of(row.getValue("id")));
             }
-            if (Utils.isNotEmpty(row.getString("login"))) {
-                event.put("login", row.getString("login"));
-            }
-            if (Utils.isNotEmpty(row.getString("login_alias"))) {
-                event.put("login-alias", row.getString("login_alias"));
-            }
-            events.add(event);
-            tuples.add(Tuple.of(row.getValue("id")));
-        }
-        if (!events.isEmpty()) {
-            final HttpClientRequest req = httpClient.put(baseUriPath, resp -> {
-                resp.exceptionHandler(Future::failedFuture);
-                if (resp.statusCode() == 200) {
-                    handler.handle(Future.succeededFuture(tuples));
-                } else if (resp.statusCode() == 202) {
-                    resp.bodyHandler(body -> {
-                        final JsonArray ids = new JsonArray(body.toString());
-                        final List<Tuple> t = new ArrayList<>();
-                        ids.stream().forEach(id -> t.add(Tuple.of(UUID.fromString(id.toString()))));
-                        handler.handle(Future.succeededFuture(t));
+            future.complete(Arrays.asList(events, tuples));
+        }, ar -> {
+            if (ar.succeeded()) {
+                final JsonArray events = (JsonArray) ar.result().get(0);
+                final List<Tuple> tuples = (List<Tuple>) ar.result().get(1);
+                if (!events.isEmpty()) {
+                    final HttpClientRequest req = httpClient.put(baseUriPath, resp -> {
+                        resp.exceptionHandler(Future::failedFuture);
+                        if (resp.statusCode() == 200) {
+                            handler.handle(Future.succeededFuture(tuples));
+                        } else if (resp.statusCode() == 202) {
+                            resp.bodyHandler(body -> {
+                                final JsonArray ids = new JsonArray(body.toString());
+                                final List<Tuple> t = new ArrayList<>();
+                                ids.stream().forEach(id -> t.add(Tuple.of(UUID.fromString(id.toString()))));
+                                handler.handle(Future.succeededFuture(t));
+                            });
+                        } else {
+                            resp.bodyHandler(body -> log.error("body resp error" + body.toString()));
+                            handler.handle(Future.failedFuture(new ValidationException("invalid.status.code : " + resp.statusCode())));
+                        }
                     });
-                } else {
-                    resp.bodyHandler(body -> log.error("body resp error" + body.toString()));
-                    handler.handle(Future.failedFuture(new ValidationException("invalid.status.code : " + resp.statusCode())));
+                    req.headers()
+                            .add("Content-Type", "application/json")
+                            .add("Accept", "application/json; charset=UTF-8")
+                            .add("Authorization", authorizationHeader);
+                    req.exceptionHandler(Future::failedFuture);
+                    req.setTimeout(timeout);
+                    // log.info("send payload : " + events.encode());
+                    req.end(events.encode());
                 }
-            });
-            req.headers()
-                    .add("Content-Type", "application/json")
-                    .add("Accept", "application/json; charset=UTF-8")
-                    .add("Authorization", authorizationHeader);
-            req.exceptionHandler(Future::failedFuture);
-            req.setTimeout(timeout);
-            // log.info("send payload : " + events.encode());
-            req.end(events.encode());
-        }
+            } else {
+                log.error("Error preparing payload in blocking context.");
+                handler.handle(Future.failedFuture(ar.cause()));
+            }
+        });
     }
 
     private void load(List<Tuple> tuples, Handler<AsyncResult<Void>> handler) {
