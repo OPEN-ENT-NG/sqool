@@ -123,9 +123,22 @@ public class SyncAD implements Handler<Long> {
     }
 
     private void extract(Handler<AsyncResult<PgRowSet>> handler) {
-        final String query = "SELECT e.id as id, date, login, login_alias, password, event_type, e.profile as profile, u.external_id as external_id "
-                + "FROM events.auth_events e " + "LEFT JOIN repository.users u on e.user_id = u.id "
-                + "WHERE sync IS NULL AND e.platform_id = $1 " + "ORDER BY date ASC ";
+        // final String query = "SELECT e.id as id, date, login, login_alias, password, event_type, e.profile as profile, u.external_id as external_id "
+        //         + "FROM events.auth_events e " + "LEFT JOIN repository.users u on e.user_id = u.id "
+        //         + "WHERE sync IS NULL AND e.platform_id = $1 " + "ORDER BY date ASC ";
+
+        final String query =
+            "WITH w as ( " +
+            "SELECT id, rank() OVER (PARTITION BY login, event_type ORDER BY date DESC) as r " +
+            "FROM events.auth_events " +
+            "WHERE platform_id = $1 " +
+            ") " +
+            "SELECT e.id as id, date, login, login_alias, password, event_type, e.profile as profile, u.external_id as external_id " +
+            "FROM events.auth_events e " +
+            "JOIN w ON e.id = w.id " +
+            "LEFT JOIN repository.users u on e.user_id = u.id " +
+            "WHERE w.r = 1 AND e.sync IS NULL " +
+            "ORDER BY date ASC";
         slavePgPool.preparedQuery(query, Tuple.of(platformId), handler);
     }
 
