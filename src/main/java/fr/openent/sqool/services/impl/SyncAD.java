@@ -8,6 +8,8 @@ import java.util.List;
 import java.util.Random;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Collector;
+import java.util.stream.Collectors;
 
 import javax.crypto.Cipher;
 import javax.crypto.SecretKey;
@@ -52,6 +54,7 @@ public class SyncAD implements Handler<Long> {
     private final String passwordEncryptKey;
     private final SecureRandom random = new SecureRandom();
     private final AtomicBoolean inProgress = new AtomicBoolean(false);
+    private final String filterEventType;
 
     public SyncAD(Vertx vertx) {
         this.vertx = vertx;
@@ -100,6 +103,14 @@ public class SyncAD implements Handler<Long> {
                 .setMaxPoolSize(sqoolConfig.getInteger("pool-size", 5)).setConnectTimeout((int) timeout)
                 .setKeepAlive(sqoolConfig.getBoolean("keep-alive", true));
         httpClient = vertx.createHttpClient(options);
+
+        final JsonArray filterEventTypes = config.getJsonArray("only-types", new JsonArray().add("PASSWORD").add("DELETED"));
+        if (filterEventTypes != null && !filterEventTypes.isEmpty()) {
+            filterEventType = "AND event_type IN " + filterEventTypes.stream()
+                    .map(Object::toString).collect(Collectors.joining("','", "('", "')"));
+        } else {
+            filterEventType = "";
+        }
     }
 
     @Override
@@ -148,7 +159,7 @@ public class SyncAD implements Handler<Long> {
             "WITH w as ( " +
             "SELECT id, rank() OVER (PARTITION BY login, event_type ORDER BY date DESC) as r " +
             "FROM events.auth_events " +
-            "WHERE platform_id = $1 " +
+            "WHERE platform_id = $1 " + filterEventType +
             ") " +
             "SELECT e.id as id, date, login, login_alias, password, event_type, e.profile as profile, u.external_id as external_id " +
             "FROM events.auth_events e " +
