@@ -7,6 +7,7 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Random;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import javax.crypto.Cipher;
 import javax.crypto.SecretKey;
@@ -50,6 +51,7 @@ public class SyncAD implements Handler<Long> {
     private final long timeout;
     private final String passwordEncryptKey;
     private final SecureRandom random = new SecureRandom();
+    private final AtomicBoolean inProgress = new AtomicBoolean(false);
 
     public SyncAD(Vertx vertx) {
         this.vertx = vertx;
@@ -102,13 +104,23 @@ public class SyncAD implements Handler<Long> {
 
     @Override
     public void handle(Long delay) {
+        if (!inProgress.compareAndSet(false, true)) {
+            log.info("Disable sync AD launch. Because is already in progress.");
+            return;
+        }
         log.info("Launch sync AD task");
         final long startTime = System.currentTimeMillis();
         extract(ar -> {
             if (ar.succeeded()) {
-                transform(ar.result(), ar2 -> {
+                final PgRowSet rows = ar.result();
+                if (rows.size() == 0) {
+                    inProgress.set(false);
+                    return;
+                }
+                transform(rows, ar2 -> {
                     if (ar2.succeeded()) {
                         load(ar2.result(), ar3 -> {
+                            inProgress.set(false);
                             if (ar3.succeeded()) {
                                 log.info("Sync AD succeeded in " + (System.currentTimeMillis() - startTime) + "ms.");
                             } else {
@@ -116,10 +128,12 @@ public class SyncAD implements Handler<Long> {
                             }
                         });
                     } else {
+                        inProgress.set(false);
                         log.error("Error sending events to sqool", ar2.cause());
                     }
                 });
             } else {
+                inProgress.set(false);
                 log.error("Error extracting events to sqool", ar.cause());
             }
         });
