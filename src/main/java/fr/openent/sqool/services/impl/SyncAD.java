@@ -8,7 +8,6 @@ import java.util.List;
 import java.util.Random;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.stream.Collector;
 import java.util.stream.Collectors;
 
 import javax.crypto.Cipher;
@@ -55,6 +54,7 @@ public class SyncAD implements Handler<Long> {
     private final SecureRandom random = new SecureRandom();
     private final AtomicBoolean inProgress = new AtomicBoolean(false);
     private final String filterEventType;
+    private final int batchSize;
 
     public SyncAD(Vertx vertx) {
         this.vertx = vertx;
@@ -111,6 +111,7 @@ public class SyncAD implements Handler<Long> {
         } else {
             filterEventType = "";
         }
+        batchSize = config.getInteger("batch-size", 1000);
     }
 
     @Override
@@ -130,10 +131,16 @@ public class SyncAD implements Handler<Long> {
                 }
                 transform(rows, ar2 -> {
                     if (ar2.succeeded()) {
-                        load(ar2.result(), ar3 -> {
+                        final List<Tuple> tuples = ar2.result();
+                        load(tuples, ar3 -> {
                             inProgress.set(false);
                             if (ar3.succeeded()) {
-                                log.info("Sync AD succeeded in " + (System.currentTimeMillis() - startTime) + "ms.");
+                                if (tuples.size() < batchSize) {
+                                    log.info("Sync AD succeeded in " + (System.currentTimeMillis() - startTime) + "ms.");
+                                } else {
+                                    log.info("Sync AD iteration in " + (System.currentTimeMillis() - startTime) + "ms.");
+                                    handle(delay);
+                                }
                             } else {
                                 log.error("Error updating events to sqool", ar3.cause());
                             }
@@ -166,7 +173,8 @@ public class SyncAD implements Handler<Long> {
             "JOIN w ON e.id = w.id " +
             "LEFT JOIN repository.users u on e.user_id = u.id " +
             "WHERE w.r = 1 AND e.sync IS NULL " +
-            "ORDER BY date ASC";
+            "ORDER BY date ASC " +
+            "LIMIT " + batchSize;
         slavePgPool.preparedQuery(query, Tuple.of(platformId), handler);
     }
 
