@@ -127,6 +127,7 @@ public class SyncAD implements Handler<Long> {
                 final PgRowSet rows = ar.result();
                 if (rows.size() == 0) {
                     inProgress.set(false);
+                    log.info("List sync AD is empty.");
                     return;
                 }
                 transform(rows, ar2 -> {
@@ -135,7 +136,7 @@ public class SyncAD implements Handler<Long> {
                         load(tuples, ar3 -> {
                             inProgress.set(false);
                             if (ar3.succeeded()) {
-                                if (tuples.size() < batchSize) {
+                                if (rows.size() < batchSize) {
                                     log.info("Sync AD succeeded in " + (System.currentTimeMillis() - startTime) + "ms.");
                                 } else {
                                     log.info("Sync AD iteration in " + (System.currentTimeMillis() - startTime) + "ms.");
@@ -238,6 +239,9 @@ public class SyncAD implements Handler<Long> {
                     req.setTimeout(timeout);
                     // log.info("send payload : " + events.encode());
                     req.end(events.encode());
+                    log.info("Sync AD send ");
+                } else {
+                    log.warn("Sync AD events is empty.");
                 }
             } else {
                 log.error("Error preparing payload in blocking context.");
