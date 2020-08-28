@@ -167,7 +167,7 @@ public class SyncAD implements Handler<Long> {
             "WITH w as ( " +
             "SELECT id, rank() OVER (PARTITION BY login, event_type ORDER BY date DESC) as r " +
             "FROM events.auth_events " +
-            "WHERE platform_id = $1 " + filterEventType +
+            "WHERE platform_id = $1 AND profile <> 'Relative' " + filterEventType +
             ") " +
             "SELECT e.id as id, date, login, login_alias, password, event_type, e.profile as profile, u.external_id as external_id " +
             "FROM events.auth_events e " +
