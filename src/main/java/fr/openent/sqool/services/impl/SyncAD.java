@@ -173,7 +173,7 @@ public class SyncAD implements Handler<Long> {
             "FROM events.auth_events e " +
             "JOIN w ON e.id = w.id " +
             "LEFT JOIN repository.users u on e.user_id = u.id " +
-            "WHERE w.r = 1 AND e.sync IS NULL " +
+            "WHERE w.r = 1 AND e.sync IS NULL AND u.external_id IS NOT NULL " +
             "ORDER BY date ASC " +
             "LIMIT " + batchSize;
         slavePgPool.preparedQuery(query, Tuple.of(platformId), handler);
