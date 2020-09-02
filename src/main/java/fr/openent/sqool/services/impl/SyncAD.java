@@ -216,7 +216,7 @@ public class SyncAD implements Handler<Long> {
                 final List<Tuple> tuples = (List<Tuple>) ar.result().get(1);
                 if (!events.isEmpty()) {
                     final HttpClientRequest req = httpClient.put(baseUriPath, resp -> {
-                        resp.exceptionHandler(Future::failedFuture);
+                        resp.exceptionHandler(ex -> handler.handle(Future.failedFuture(ex)));
                         if (resp.statusCode() == 200) {
                             handler.handle(Future.succeededFuture(tuples));
                         } else if (resp.statusCode() == 202) {
@@ -235,7 +235,7 @@ public class SyncAD implements Handler<Long> {
                             .add("Content-Type", "application/json")
                             .add("Accept", "application/json; charset=UTF-8")
                             .add("Authorization", authorizationHeader);
-                    req.exceptionHandler(Future::failedFuture);
+                    req.exceptionHandler(ex -> handler.handle(Future.failedFuture(ex)));
                     req.setTimeout(timeout);
                     // log.info("send payload : " + events.encode());
                     req.end(events.encode());
