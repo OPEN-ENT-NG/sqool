@@ -51,7 +51,7 @@ public class DefaultSqoolService implements SqoolService {
                 "OPTIONAL MATCH u-[:IN]->(:ProfileGroup)-[:DEPENDS]->(se:Structure) " +
                 "OPTIONAL MATCH u-[:IN]->(fg:FunctionalGroup) " +
                 "OPTIONAL MATCH u-[:IN]->(mg:ManualGroup) " +
-                "RETURN u.login as login, u.lastName as lastName, u.firstName as firstName, u.displayName as username, " +
+                "RETURN u.login as login, u.lastName as lastName, u.firstName as firstName, u.displayName as username, u.birthDate as birthDate, " +
                 "head(u.profiles) as type, COLLECT(DISTINCT se.UAI) as uai, u.externalId as userId, u.activationCode as activationCode, " +
                 "COLLECT(DISTINCT {UAI: sc.UAI, classname: c.name}) as realClassesNames, " +
                 "u.level as level, u.startDateClasses as startDateClasses, u.endDateClasses as endDateClasses, " +
