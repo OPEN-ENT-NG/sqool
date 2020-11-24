@@ -44,17 +44,27 @@ public class DefaultSqoolService implements SqoolService {
         } else {
             filter = "";
         }
+        final String additionalReturn;
+        if ("Student".equals(profile)) {
+            additionalReturn =
+                    "u.birthDate as birthDate, u.attachmentId as attachmentId, u.module as module, u.moduleName as moduleName, " +
+                    "u.level as level, u.startDateClasses as startDateClasses, u.endDateClasses as endDateClasses, ";
+        } else if ("Teacher".equals(profile) || "Personnel".equals(profile)) {
+            additionalReturn = "u.emailAcademy as emailAcademy, u.modules as modules, ";
+        } else {
+            additionalReturn = "";
+        }
         final String query =
                 "MATCH (s:Structure {UAI:{UAI}})<-[:DEPENDS]-(:ProfileGroup)<-[:IN]-(u:User) " +
                 "WHERE HEAD(u.profiles) = {profile} " + filter +
                 "OPTIONAL MATCH u-[:IN]->(:ProfileGroup)-[:DEPENDS]->(c:Class)-[:BELONGS]->(sc:Structure) " +
-                "OPTIONAL MATCH u-[:IN]->(:ProfileGroup)-[:DEPENDS]->(se:Structure) " +
+                "OPTIONAL MATCH u-[:ADMINISTRATIVE_ATTACHMENT]->(se:Structure) " +
                 "OPTIONAL MATCH u-[:IN]->(fg:FunctionalGroup) " +
                 "OPTIONAL MATCH u-[:IN]->(mg:ManualGroup) " +
-                "RETURN u.login as login, u.lastName as lastName, u.firstName as firstName, u.displayName as username, u.birthDate as birthDate, " +
+                "RETURN u.login as login, u.lastName as lastName, u.firstName as firstName, u.displayName as username, " +
+                additionalReturn +
                 "head(u.profiles) as type, COLLECT(DISTINCT se.UAI) as uai, u.externalId as userId, u.activationCode as activationCode, " +
                 "COLLECT(DISTINCT {UAI: sc.UAI, classname: c.name}) as realClassesNames, " +
-                "u.level as level, u.startDateClasses as startDateClasses, u.endDateClasses as endDateClasses, " +
                 "(CASE WHEN LENGTH(COLLECT(DISTINCT fg)) = 0 THEN [] ELSE COLLECT(DISTINCT {id: fg.id, name: fg.name, source: 'AUTO'}) END + " +
                 "CASE WHEN LENGTH(COLLECT(DISTINCT mg)) = 0 THEN [] ELSE COLLECT(DISTINCT {id: mg.id, name: mg.name, source: 'MANUAL'}) END) as groups;";
         neo4j.execute(query, params, Neo4jResult.validResultHandler(handler));
