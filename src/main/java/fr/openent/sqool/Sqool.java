@@ -28,6 +28,8 @@ import fr.openent.sqool.controllers.SqoolController;
 import fr.openent.sqool.services.impl.DefaultSqoolService;
 import fr.openent.sqool.services.impl.SyncAD;
 import fr.wseduc.cron.CronTrigger;
+import io.vertx.core.json.JsonArray;
+import io.vertx.core.json.JsonObject;
 
 public class Sqool extends BaseServer {
 
@@ -39,14 +41,21 @@ public class Sqool extends BaseServer {
 		sqoolController.setSqoolService(new DefaultSqoolService());
 		addController(sqoolController);
 
-		final String syncCron = config.getString("sync-cron");
-		if (syncCron != null) {
-			try {
-				new CronTrigger(vertx, syncCron).schedule(new SyncAD(vertx));
-			} catch (ValidationException ex) {
-				log.error("Invalid configuration for sync AD task", ex);
-			} catch (ParseException e) {
-				log.error("Error parsing quartz expression for sync AD", e);
+		final JsonArray webhooks = config.getJsonArray("webhooks");
+		if (webhooks != null && !webhooks.isEmpty()) {
+			for (Object o: webhooks) {
+				if (!(o instanceof JsonObject)) continue;
+				final JsonObject webhookConfig = (JsonObject) o;
+				final String syncCron = webhookConfig.getString("sync-cron");
+				if (syncCron != null) {
+					try {
+						new CronTrigger(vertx, syncCron).schedule(new SyncAD(vertx, webhookConfig));
+					} catch (ValidationException ex) {
+						log.error("Invalid configuration for sync AD task", ex);
+					} catch (ParseException e) {
+						log.error("Error parsing quartz expression for sync AD", e);
+					}
+				}
 			}
 		}
 	}

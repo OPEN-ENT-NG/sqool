@@ -54,11 +54,13 @@ public class SyncAD implements Handler<Long> {
     private final SecureRandom random = new SecureRandom();
     private final AtomicBoolean inProgress = new AtomicBoolean(false);
     private final String filterEventType;
+    private final String filterProfiles;
     private final int batchSize;
+    private final int idxWebhook;
 
-    public SyncAD(Vertx vertx) {
+    public SyncAD(Vertx vertx, JsonObject webhookConfig) {
         this.vertx = vertx;
-        final JsonObject config = vertx.getOrCreateContext().config();
+        this.idxWebhook = webhookConfig.getInteger("idx");
         final String eventStoreConf = (String) vertx.sharedData().getLocalMap("server").get("event-store");
         if (eventStoreConf != null) {
             final JsonObject eventStoreConfig = new JsonObject(eventStoreConf);
@@ -93,25 +95,34 @@ public class SyncAD implements Handler<Long> {
             throw new ValidationException("invalid.configuration.eventstore");
         }
 
-        final JsonObject sqoolConfig = config.getJsonObject("sqool-http");
-        this.passwordEncryptKey = sqoolConfig.getString("password-encryption-secret");
-        this.timeout = sqoolConfig.getLong("timeout", 30000l);
-        this.baseUriPath = sqoolConfig.getString("base-uri-path");
-        this.authorizationHeader = "Basic " + sqoolConfig.getString("basic-header");
-        final HttpClientOptions options = new HttpClientOptions().setDefaultHost(sqoolConfig.getString("host"))
-                .setDefaultPort(sqoolConfig.getInteger("port")).setSsl(sqoolConfig.getBoolean("ssl", true))
-                .setMaxPoolSize(sqoolConfig.getInteger("pool-size", 5)).setConnectTimeout((int) timeout)
-                .setKeepAlive(sqoolConfig.getBoolean("keep-alive", true));
+        final JsonObject httpWebhookConfig = webhookConfig.getJsonObject("http-webhook");
+        this.passwordEncryptKey = httpWebhookConfig.getString("password-encryption-secret");
+        this.timeout = httpWebhookConfig.getLong("timeout", 30000l);
+        this.baseUriPath = httpWebhookConfig.getString("base-uri-path");
+        this.authorizationHeader = "Basic " + httpWebhookConfig.getString("basic-header");
+        final HttpClientOptions options = new HttpClientOptions().setDefaultHost(httpWebhookConfig.getString("host"))
+                .setDefaultPort(httpWebhookConfig.getInteger("port")).setSsl(httpWebhookConfig.getBoolean("ssl", true))
+                .setMaxPoolSize(httpWebhookConfig.getInteger("pool-size", 5)).setConnectTimeout((int) timeout)
+                .setKeepAlive(httpWebhookConfig.getBoolean("keep-alive", true));
         httpClient = vertx.createHttpClient(options);
 
-        final JsonArray filterEventTypes = config.getJsonArray("only-types", new JsonArray().add("PASSWORD").add("DELETED"));
+        final JsonArray filterEventTypes = webhookConfig.getJsonArray("only-types", new JsonArray().add("PASSWORD").add("DELETED"));
         if (filterEventTypes != null && !filterEventTypes.isEmpty()) {
             filterEventType = "AND event_type IN " + filterEventTypes.stream()
                     .map(Object::toString).collect(Collectors.joining("','", "('", "')"));
         } else {
             filterEventType = "";
         }
-        batchSize = config.getInteger("batch-size", 1000);
+
+        final JsonArray profiles = webhookConfig.getJsonArray("profiles", new JsonArray().add("Teacher").add("Personnel").add("Student").add("Guest"));
+        if (profiles != null && !profiles.isEmpty()) {
+            filterProfiles = "AND profile IN " + profiles.stream()
+                    .map(Object::toString).collect(Collectors.joining("','", "('", "') "));
+        } else {
+            filterProfiles = "";
+        }
+
+        batchSize = webhookConfig.getInteger("batch-size", 1000);
     }
 
     @Override
@@ -159,21 +170,18 @@ public class SyncAD implements Handler<Long> {
     }
 
     private void extract(Handler<AsyncResult<PgRowSet>> handler) {
-        // final String query = "SELECT e.id as id, date, login, login_alias, password, event_type, e.profile as profile, u.external_id as external_id "
-        //         + "FROM events.auth_events e " + "LEFT JOIN repository.users u on e.user_id = u.id "
-        //         + "WHERE sync IS NULL AND e.platform_id = $1 " + "ORDER BY date ASC ";
 
         final String query =
             "WITH w as ( " +
             "SELECT id, rank() OVER (PARTITION BY login, event_type ORDER BY date DESC) as r " +
             "FROM events.auth_events " +
-            "WHERE platform_id = $1 AND profile <> 'Relative' " + filterEventType +
+            "WHERE platform_id = $1 " + filterProfiles + filterEventType +
             ") " +
             "SELECT e.id as id, date, login, login_alias, password, event_type, e.profile as profile, u.external_id as external_id " +
             "FROM events.auth_events e " +
             "JOIN w ON e.id = w.id " +
             "JOIN repository.users u on e.user_id = u.id " +
-            "WHERE w.r = 1 AND e.sync IS NULL " +
+            "WHERE w.r = 1 AND ((e.sync >> " + idxWebhook + ") & 1) = 0 " +
             "ORDER BY date ASC " +
             "LIMIT " + batchSize;
         slavePgPool.preparedQuery(query, Tuple.of(platformId), handler);
@@ -253,8 +261,8 @@ public class SyncAD implements Handler<Long> {
     private void load(List<Tuple> tuples, Handler<AsyncResult<Void>> handler) {
         final String query =
                 "UPDATE events.auth_events " +
-                "SET sync = true " +
-                "WHERE id = $1 ";
+                "SET sync = sync + 2^" + idxWebhook +
+                " WHERE id = $1 AND ((e.sync >> " + idxWebhook + ") & 1) = 0 ";
         masterPgPool.preparedBatch(query, tuples, ar -> {
             if (ar.succeeded()) {
                 handler.handle(Future.succeededFuture());
