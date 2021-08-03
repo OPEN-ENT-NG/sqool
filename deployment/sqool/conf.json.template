@@ -1,5 +1,5 @@
 {
-  "name": "fr.openent~sqool~1.1.1",
+  "name": "fr.openent~sqool~1.1-SNAPSHOT",
   "config": {
     "main" : "fr.openent.sqool.Sqool",
     "port" : 8057,
