@@ -262,7 +262,7 @@ public class SyncAD implements Handler<Long> {
         final String query =
                 "UPDATE events.auth_events " +
                 "SET sync = sync + 2^" + idxWebhook +
-                " WHERE id = $1 AND ((e.sync >> " + idxWebhook + ") & 1) = 0 ";
+                " WHERE id = $1 AND ((sync >> " + idxWebhook + ") & 1) = 0 ";
         masterPgPool.preparedBatch(query, tuples, ar -> {
             if (ar.succeeded()) {
                 handler.handle(Future.succeededFuture());
