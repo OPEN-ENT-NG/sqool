@@ -1,0 +1,15 @@
+{
+    "name": "{{ sqoolVersion }}",
+    "config": {
+        "main": "fr.openent.sqool.Sqool",
+        "port": 8057,
+        "host": "https://{{ host }}",
+        "ssl": true,
+        {% if overrideTheme %} "override-theme": {{ override2d }}, {% endif %}
+        "auto-redeploy": false,
+        "userbook-host": "https://{{ host }}",
+        "mode": "prod",
+        "webhooks" : {{ sqoolWebhooks|default('[]') }},
+        "publicConf": {}
+    }
+  }
