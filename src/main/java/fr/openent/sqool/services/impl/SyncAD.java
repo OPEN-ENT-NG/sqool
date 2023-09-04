@@ -148,9 +148,11 @@ public class SyncAD implements Handler<Long> {
                             inProgress.set(false);
                             if (ar3.succeeded()) {
                                 if (rows.size() < batchSize) {
-                                    log.info("Sync AD succeeded in " + (System.currentTimeMillis() - startTime) + "ms.");
+                                    log.info("Sync AD webhook " + idxWebhook + " succeeded " + rows.size() + " rows and " + tuples.size() +
+                                            " tuples in " + (System.currentTimeMillis() - startTime) + "ms.");
                                 } else {
-                                    log.info("Sync AD iteration in " + (System.currentTimeMillis() - startTime) + "ms.");
+                                    log.info("Sync AD webhook " + idxWebhook + " iteration " + rows.size() + " rows and " + tuples.size() +
+                                            " tuples in " + (System.currentTimeMillis() - startTime) + "ms.");
                                     handle(delay);
                                 }
                             } else {
