@@ -17,6 +17,8 @@ import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.PBEKeySpec;
 import javax.crypto.spec.SecretKeySpec;
 
+import io.vertx.core.http.*;
+import io.vertx.core.http.impl.headers.HeadersMultiMap;
 import org.entcore.common.validation.ValidationException;
 
 import fr.wseduc.webutils.Utils;
@@ -30,9 +32,6 @@ import io.vertx.core.AsyncResult;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
-import io.vertx.core.http.HttpClient;
-import io.vertx.core.http.HttpClientOptions;
-import io.vertx.core.http.HttpClientRequest;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.core.logging.Logger;
@@ -225,31 +224,34 @@ public class SyncAD implements Handler<Long> {
                 final JsonArray events = (JsonArray) ar.result().get(0);
                 final List<Tuple> tuples = (List<Tuple>) ar.result().get(1);
                 if (!events.isEmpty()) {
-                    final HttpClientRequest req = httpClient.put(baseUriPath, resp -> {
-                        resp.exceptionHandler(ex -> handler.handle(Future.failedFuture(ex)));
-                        if (resp.statusCode() == 200) {
-                            handler.handle(Future.succeededFuture(tuples));
-                        } else if (resp.statusCode() == 202) {
-                            resp.bodyHandler(body -> {
-                                final JsonArray ids = new JsonArray(body.toString());
-                                final List<Tuple> t = new ArrayList<>();
-                                ids.stream().forEach(id -> t.add(Tuple.of(UUID.fromString(id.toString()))));
-                                handler.handle(Future.succeededFuture(t));
+                    httpClient.request(new RequestOptions()
+                                    .setMethod(HttpMethod.PUT)
+                                    .setURI(baseUriPath)
+                                    .setHeaders(new HeadersMultiMap()
+                                            .add("Content-Type", "application/json")
+                                            .add("Accept", "application/json; charset=UTF-8")
+                                            .add("Authorization", authorizationHeader))
+                                    .setTimeout(timeout))
+                            .flatMap(request -> {
+                                log.info("Sync AD send ");
+                                return request.send(events.encode());
+                            })
+                            .onFailure(ex -> handler.handle(Future.failedFuture(ex)))
+                            .onSuccess(resp -> {
+                                if (resp.statusCode() == 200) {
+                                    handler.handle(Future.succeededFuture(tuples));
+                                } else if (resp.statusCode() == 202) {
+                                    resp.bodyHandler(body -> {
+                                        final JsonArray ids = new JsonArray(body.toString());
+                                        final List<Tuple> t = new ArrayList<>();
+                                        ids.stream().forEach(id -> t.add(Tuple.of(UUID.fromString(id.toString()))));
+                                        handler.handle(Future.succeededFuture(t));
+                                    });
+                                } else {
+                                    resp.bodyHandler(body -> log.error("body resp error" + body.toString()));
+                                    handler.handle(Future.failedFuture(new ValidationException("invalid.status.code : " + resp.statusCode())));
+                                }
                             });
-                        } else {
-                            resp.bodyHandler(body -> log.error("body resp error" + body.toString()));
-                            handler.handle(Future.failedFuture(new ValidationException("invalid.status.code : " + resp.statusCode())));
-                        }
-                    });
-                    req.headers()
-                            .add("Content-Type", "application/json")
-                            .add("Accept", "application/json; charset=UTF-8")
-                            .add("Authorization", authorizationHeader);
-                    req.exceptionHandler(ex -> handler.handle(Future.failedFuture(ex)));
-                    req.setTimeout(timeout);
-                    // log.info("send payload : " + events.encode());
-                    req.end(events.encode());
-                    log.info("Sync AD send ");
                 } else {
                     log.warn("Sync AD events is empty.");
                 }
