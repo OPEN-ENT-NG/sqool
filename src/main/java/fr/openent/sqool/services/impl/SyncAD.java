@@ -17,22 +17,21 @@ import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.PBEKeySpec;
 import javax.crypto.spec.SecretKeySpec;
 
+import io.vertx.core.http.*;
+import io.vertx.core.http.impl.headers.HeadersMultiMap;
+import io.vertx.pgclient.PgConnectOptions;
+import io.vertx.pgclient.PgPool;
+import io.vertx.sqlclient.PoolOptions;
+import io.vertx.sqlclient.Row;
+import io.vertx.sqlclient.RowSet;
+import io.vertx.sqlclient.Tuple;
 import org.entcore.common.validation.ValidationException;
 
 import fr.wseduc.webutils.Utils;
-import io.reactiverse.pgclient.PgClient;
-import io.reactiverse.pgclient.PgPool;
-import io.reactiverse.pgclient.PgPoolOptions;
-import io.reactiverse.pgclient.PgRowSet;
-import io.reactiverse.pgclient.Row;
-import io.reactiverse.pgclient.Tuple;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
-import io.vertx.core.http.HttpClient;
-import io.vertx.core.http.HttpClientOptions;
-import io.vertx.core.http.HttpClientRequest;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.core.logging.Logger;
@@ -68,26 +67,28 @@ public class SyncAD implements Handler<Long> {
 
             final JsonObject eventStorePGConfig = eventStoreConfig.getJsonObject("postgresql");
             if (eventStorePGConfig != null) {
-                final PgPoolOptions options = new PgPoolOptions().setPort(eventStorePGConfig.getInteger("port", 5432))
+                final PgConnectOptions options = new PgConnectOptions().setPort(eventStorePGConfig.getInteger("port", 5432))
                         .setHost(eventStorePGConfig.getString("host"))
                         .setDatabase(eventStorePGConfig.getString("database"))
                         .setUser(eventStorePGConfig.getString("user"))
-                        .setPassword(eventStorePGConfig.getString("password"))
-                        .setMaxSize(eventStorePGConfig.getInteger("pool-size", 5));
-                this.masterPgPool = PgClient.pool(vertx, options);
+                        .setPassword(eventStorePGConfig.getString("password"));
+                final PoolOptions poolOptions = new PoolOptions()
+                  .setMaxSize(eventStorePGConfig.getInteger("pool-size", 5));
+                this.masterPgPool = PgPool.pool(vertx, options, poolOptions);
             } else {
                 throw new ValidationException("invalid.configuration.postgresql");
             }
             final JsonObject eventStorePGSlaveConfig = eventStoreConfig.getJsonObject("postgresql-slave");
             if (eventStorePGSlaveConfig != null) {
-                final PgPoolOptions options = new PgPoolOptions()
+                final PgConnectOptions options = new PgConnectOptions()
                         .setPort(eventStorePGSlaveConfig.getInteger("port", 5432))
                         .setHost(eventStorePGSlaveConfig.getString("host"))
                         .setDatabase(eventStorePGSlaveConfig.getString("database"))
                         .setUser(eventStorePGSlaveConfig.getString("user"))
-                        .setPassword(eventStorePGSlaveConfig.getString("password"))
-                        .setMaxSize(eventStorePGSlaveConfig.getInteger("pool-size", 5));
-                this.slavePgPool = PgClient.pool(vertx, options);
+                        .setPassword(eventStorePGSlaveConfig.getString("password"));
+                final PoolOptions poolOptions = new PoolOptions()
+                  .setMaxSize(eventStorePGConfig.getInteger("pool-size", 5));
+                this.slavePgPool = PgPool.pool(vertx, options, poolOptions);
             } else {
                 this.slavePgPool = masterPgPool;
             }
@@ -135,7 +136,7 @@ public class SyncAD implements Handler<Long> {
         final long startTime = System.currentTimeMillis();
         extract(ar -> {
             if (ar.succeeded()) {
-                final PgRowSet rows = ar.result();
+                final RowSet<Row> rows = ar.result();
                 if (rows.size() == 0) {
                     inProgress.set(false);
                     log.info("List sync AD is empty.");
@@ -171,8 +172,7 @@ public class SyncAD implements Handler<Long> {
         });
     }
 
-    private void extract(Handler<AsyncResult<PgRowSet>> handler) {
-
+    private void extract(Handler<AsyncResult<RowSet<Row>>> handler) {
         final String query =
             "WITH w as ( " +
             "SELECT id, rank() OVER (PARTITION BY login, event_type ORDER BY date DESC) as r " +
@@ -186,10 +186,11 @@ public class SyncAD implements Handler<Long> {
             "WHERE w.r = 1 AND ((e.sync >> " + idxWebhook + ") & 1) = 0 " +
             "ORDER BY date ASC " +
             "LIMIT " + batchSize;
-        slavePgPool.preparedQuery(query, Tuple.of(platformId), handler);
+        slavePgPool.preparedQuery(query)
+          .execute(Tuple.of(platformId), handler);
     }
 
-    private void transform(PgRowSet rows, Handler<AsyncResult<List<Tuple>>> handler) {
+    private void transform(RowSet<Row> rows, Handler<AsyncResult<List<Tuple>>> handler) {
         vertx.<List<Object>>executeBlocking(future -> {
             final List<Tuple> tuples = new ArrayList<>();
             final JsonArray events = new JsonArray();
@@ -225,31 +226,34 @@ public class SyncAD implements Handler<Long> {
                 final JsonArray events = (JsonArray) ar.result().get(0);
                 final List<Tuple> tuples = (List<Tuple>) ar.result().get(1);
                 if (!events.isEmpty()) {
-                    final HttpClientRequest req = httpClient.put(baseUriPath, resp -> {
-                        resp.exceptionHandler(ex -> handler.handle(Future.failedFuture(ex)));
-                        if (resp.statusCode() == 200) {
-                            handler.handle(Future.succeededFuture(tuples));
-                        } else if (resp.statusCode() == 202) {
-                            resp.bodyHandler(body -> {
-                                final JsonArray ids = new JsonArray(body.toString());
-                                final List<Tuple> t = new ArrayList<>();
-                                ids.stream().forEach(id -> t.add(Tuple.of(UUID.fromString(id.toString()))));
-                                handler.handle(Future.succeededFuture(t));
+                    httpClient.request(new RequestOptions()
+                                    .setMethod(HttpMethod.PUT)
+                                    .setURI(baseUriPath)
+                                    .setHeaders(new HeadersMultiMap()
+                                            .add("Content-Type", "application/json")
+                                            .add("Accept", "application/json; charset=UTF-8")
+                                            .add("Authorization", authorizationHeader))
+                                    .setTimeout(timeout))
+                            .flatMap(request -> {
+                                log.info("Sync AD send ");
+                                return request.send(events.encode());
+                            })
+                            .onFailure(ex -> handler.handle(Future.failedFuture(ex)))
+                            .onSuccess(resp -> {
+                                if (resp.statusCode() == 200) {
+                                    handler.handle(Future.succeededFuture(tuples));
+                                } else if (resp.statusCode() == 202) {
+                                    resp.bodyHandler(body -> {
+                                        final JsonArray ids = new JsonArray(body.toString());
+                                        final List<Tuple> t = new ArrayList<>();
+                                        ids.stream().forEach(id -> t.add(Tuple.of(UUID.fromString(id.toString()))));
+                                        handler.handle(Future.succeededFuture(t));
+                                    });
+                                } else {
+                                    resp.bodyHandler(body -> log.error("body resp error" + body.toString()));
+                                    handler.handle(Future.failedFuture(new ValidationException("invalid.status.code : " + resp.statusCode())));
+                                }
                             });
-                        } else {
-                            resp.bodyHandler(body -> log.error("body resp error" + body.toString()));
-                            handler.handle(Future.failedFuture(new ValidationException("invalid.status.code : " + resp.statusCode())));
-                        }
-                    });
-                    req.headers()
-                            .add("Content-Type", "application/json")
-                            .add("Accept", "application/json; charset=UTF-8")
-                            .add("Authorization", authorizationHeader);
-                    req.exceptionHandler(ex -> handler.handle(Future.failedFuture(ex)));
-                    req.setTimeout(timeout);
-                    // log.info("send payload : " + events.encode());
-                    req.end(events.encode());
-                    log.info("Sync AD send ");
                 } else {
                     log.warn("Sync AD events is empty.");
                 }
@@ -265,7 +269,7 @@ public class SyncAD implements Handler<Long> {
                 "UPDATE events.auth_events " +
                 "SET sync = sync + 2^" + idxWebhook +
                 " WHERE id = $1 AND ((sync >> " + idxWebhook + ") & 1) = 0 ";
-        masterPgPool.preparedBatch(query, tuples, ar -> {
+        masterPgPool.preparedQuery(query).executeBatch(tuples, ar -> {
             if (ar.succeeded()) {
                 handler.handle(Future.succeededFuture());
             } else {

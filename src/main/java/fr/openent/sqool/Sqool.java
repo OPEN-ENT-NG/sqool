@@ -21,6 +21,7 @@ package fr.openent.sqool;
 
 import java.text.ParseException;
 
+import io.vertx.core.Promise;
 import org.entcore.common.http.BaseServer;
 import org.entcore.common.validation.ValidationException;
 
@@ -34,8 +35,8 @@ import io.vertx.core.json.JsonObject;
 public class Sqool extends BaseServer {
 
 	@Override
-	public void start() throws Exception {
-		super.start();
+	public void start(Promise<Void> startPromise) throws Exception {
+		super.start(startPromise);
 
 		final SqoolController sqoolController = new SqoolController();
 		sqoolController.setSqoolService(new DefaultSqoolService());
@@ -58,6 +59,7 @@ public class Sqool extends BaseServer {
 				}
 			}
 		}
+		startPromise.tryComplete();
 	}
 
 }
