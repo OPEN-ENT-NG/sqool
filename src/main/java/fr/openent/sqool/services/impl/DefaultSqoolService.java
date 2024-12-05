@@ -34,7 +34,7 @@ public class DefaultSqoolService implements SqoolService {
     private final Neo4j neo4j = Neo4j.getInstance();
 
     @Override
-    public void export(String uai, String p, String level, Handler<Either<String, JsonArray>> handler) {
+    public void export(String uai, String p, String level, JsonArray additionalAttributes, Handler<Either<String, JsonArray>> handler) {
         final String profile = Utils.isNotEmpty(p) ? p : "Student";
         final JsonObject params = new JsonObject().put("UAI", uai).put("profile", profile);
         final String filter;
@@ -44,16 +44,9 @@ public class DefaultSqoolService implements SqoolService {
         } else {
             filter = "";
         }
-        final String additionalReturn;
-        if ("Student".equals(profile)) {
-            additionalReturn =
-                    "u.birthDate as birthDate, u.attachmentId as attachmentId, u.module as module, u.moduleName as moduleName, " +
-                    "u.level as level, u.startDateClasses as startDateClasses, u.endDateClasses as endDateClasses, ";
-        } else if ("Teacher".equals(profile) || "Personnel".equals(profile)) {
-            additionalReturn = "u.emailAcademy as emailAcademy, u.modules as modules, ";
-        } else {
-            additionalReturn = "";
-        }
+
+        final String additionalReturn = composeAdditionalReturn(profile, additionalAttributes);
+
         final String query =
                 "MATCH (s:Structure {UAI:{UAI}})<-[:DEPENDS]-(:ProfileGroup)<-[:IN]-(u:User) " +
                 "WHERE HEAD(u.profiles) = {profile} " + filter +
@@ -62,6 +55,7 @@ public class DefaultSqoolService implements SqoolService {
                 "OPTIONAL MATCH u-[:ADMINISTRATIVE_ATTACHMENT]->(se:Structure) " +
                 "OPTIONAL MATCH u-[:IN]->(fg:FunctionalGroup) " +
                 "OPTIONAL MATCH u-[:IN]->(mg:ManualGroup) " +
+                "OPTIONAL MATCH (p:Profile) WHERE p.name = head(u.profiles) " +
                 "RETURN u.login as login, u.lastName as lastName, u.firstName as firstName, u.displayName as username, " +
                 additionalReturn +
                 "head(u.profiles) as type, COLLECT(DISTINCT se.UAI) as uai, COLLECT(DISTINCT sr.UAI) as uaiAttachment, u.externalId as userId, u.activationCode as activationCode, " +
@@ -71,4 +65,34 @@ public class DefaultSqoolService implements SqoolService {
         neo4j.execute(query, params, Neo4jResult.validResultHandler(handler));
     }
 
+    private String composeAdditionalReturn(final String profile, final JsonArray additionalAttributes) {
+        String additionalReturn;
+        if ("Student".equals(profile)) {
+            additionalReturn =
+                    "u.birthDate as birthDate, u.attachmentId as attachmentId, u.module as module, u.moduleName as moduleName, " +
+                            "u.level as level, u.startDateClasses as startDateClasses, u.endDateClasses as endDateClasses, ";
+            if (additionalAttributes.contains("ine")) additionalReturn += "u.ine as INE, ";
+        } else if ("Teacher".equals(profile) || "Personnel".equals(profile)) {
+            additionalReturn = "u.emailAcademy as emailAcademy, u.modules as modules, ";
+        } else {
+            additionalReturn = "";
+        }
+
+        for (Object a : additionalAttributes.getList()) {
+            if (a == null || !(a instanceof String)) continue;
+            switch ((String) a) {
+                case "ine":
+                    break;
+                case "blocked":
+                    additionalReturn += "CASE WHEN p.blocked = true OR u.blocked = true THEN true ELSE false END AS blocked, ";
+                    break;
+                case "deleteDate":
+                    additionalReturn += "has(u.deleteDate) AS preDeleted, ";
+                    break;
+                default:
+                    additionalReturn += "u." + a + " AS " + a + ", ";
+            }
+        }
+        return additionalReturn;
+    }
 }
