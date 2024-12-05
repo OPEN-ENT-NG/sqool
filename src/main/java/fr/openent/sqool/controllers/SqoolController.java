@@ -24,10 +24,13 @@ import fr.wseduc.rs.Get;
 import fr.wseduc.security.ActionType;
 import fr.wseduc.security.SecuredAction;
 import fr.wseduc.webutils.http.BaseController;
+import fr.wseduc.webutils.http.Renders;
 import io.vertx.core.http.HttpServerRequest;
 
 import static org.entcore.common.http.response.DefaultResponseHandler.arrayResponseHandler;
 
+import io.vertx.core.json.JsonArray;
+import io.vertx.core.json.JsonObject;
 import org.entcore.common.http.filter.ResourceFilter;
 import org.entcore.common.http.filter.SuperAdminFilter;
 
@@ -39,7 +42,10 @@ public class SqoolController extends BaseController {
     @SecuredAction(value = "", type = ActionType.RESOURCE)
     @ResourceFilter(SuperAdminFilter.class)
     public void exportStructure(HttpServerRequest request) {
-        sqoolService.export(request.params().get("UAI"), request.params().get("profile"), request.params().get("level"), arrayResponseHandler(request));
+        final String host = Renders.getHost(request);
+        final JsonArray additionalAttributes = config.getJsonObject("apiAdditionalAttributes", new JsonObject()).getJsonArray(host, new JsonArray());
+
+        sqoolService.export(request.params().get("UAI"), request.params().get("profile"), request.params().get("level"), additionalAttributes, arrayResponseHandler(request));
     }
 
     public void setSqoolService(SqoolService sqoolService) {

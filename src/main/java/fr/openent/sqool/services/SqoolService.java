@@ -25,6 +25,6 @@ import io.vertx.core.json.JsonArray;
 
 public interface SqoolService {
 
-    void export(String uai, String profile, String level, Handler<Either<String, JsonArray>> handler);
+    void export(String uai, String profile, String level, JsonArray additionalAttributes, Handler<Either<String, JsonArray>> handler);
 
 }
