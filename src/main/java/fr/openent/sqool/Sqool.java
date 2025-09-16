@@ -20,7 +20,10 @@
 package fr.openent.sqool;
 
 import java.text.ParseException;
+import java.util.ArrayList;
+import java.util.List;
 
+import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import org.entcore.common.http.BaseServer;
 import org.entcore.common.validation.ValidationException;
@@ -36,13 +39,18 @@ public class Sqool extends BaseServer {
 
 	@Override
 	public void start(Promise<Void> startPromise) throws Exception {
-		super.start(startPromise);
+    final Promise<Void> promise = Promise.promise();
+    super.start(promise);
+    promise.future().compose(e -> this.initSqool()).onComplete(startPromise);
+  }
 
+  public Future<Void> initSqool() {
 		final SqoolController sqoolController = new SqoolController();
 		sqoolController.setSqoolService(new DefaultSqoolService());
 		addController(sqoolController);
 
 		final JsonArray webhooks = config.getJsonArray("webhooks");
+    final List<Future<Void>> futures = new ArrayList<>();
 		if (webhooks != null && !webhooks.isEmpty()) {
 			for (Object o: webhooks) {
 				if (!(o instanceof JsonObject)) continue;
@@ -50,7 +58,9 @@ public class Sqool extends BaseServer {
 				final String syncCron = webhookConfig.getString("sync-cron");
 				if (syncCron != null) {
 					try {
-						new CronTrigger(vertx, syncCron).schedule(new SyncAD(vertx, webhookConfig));
+            final Promise<Void> promise = Promise.promise();
+						new CronTrigger(vertx, syncCron).schedule(new SyncAD(vertx, webhookConfig, promise));
+            futures.add(promise.future());
 					} catch (ValidationException ex) {
 						log.error("Invalid configuration for sync AD task", ex);
 					} catch (ParseException e) {
@@ -59,7 +69,10 @@ public class Sqool extends BaseServer {
 				}
 			}
 		}
-		startPromise.tryComplete();
+    if(futures.isEmpty()) {
+      return Future.succeededFuture();
+    }
+		return Future.all(futures).mapEmpty();
 	}
 
 }
