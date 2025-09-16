@@ -17,6 +17,8 @@ import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.PBEKeySpec;
 import javax.crypto.spec.SecretKeySpec;
 
+import fr.wseduc.webutils.collections.SharedDataHelper;
+import io.vertx.core.*;
 import io.vertx.core.http.*;
 import io.vertx.core.http.impl.headers.HeadersMultiMap;
 import io.vertx.pgclient.PgConnectOptions;
@@ -28,10 +30,6 @@ import io.vertx.sqlclient.Tuple;
 import org.entcore.common.validation.ValidationException;
 
 import fr.wseduc.webutils.Utils;
-import io.vertx.core.AsyncResult;
-import io.vertx.core.Future;
-import io.vertx.core.Handler;
-import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.core.logging.Logger;
@@ -42,88 +40,95 @@ public class SyncAD implements Handler<Long> {
     private static final Logger log = LoggerFactory.getLogger(SyncAD.class);
 
     private final Vertx vertx;
-    private final PgPool masterPgPool;
-    private final PgPool slavePgPool;
-    private final String platformId;
-    private final HttpClient httpClient;
-    private final String baseUriPath;
-    private final String authorizationHeader;
-    private final long timeout;
-    private final String passwordEncryptKey;
+    private PgPool masterPgPool;
+    private PgPool slavePgPool;
+    private String platformId;
+    private HttpClient httpClient;
+    private String baseUriPath;
+    private String authorizationHeader;
+    private long timeout;
+    private String passwordEncryptKey;
     private final SecureRandom random = new SecureRandom();
     private final AtomicBoolean inProgress = new AtomicBoolean(false);
-    private final String filterEventType;
-    private final String filterProfiles;
-    private final int batchSize;
+    private String filterEventType;
+    private String filterProfiles;
+    private int batchSize;
     private final int idxWebhook;
 
-    public SyncAD(Vertx vertx, JsonObject webhookConfig) {
+    public SyncAD(Vertx vertx, JsonObject webhookConfig, final Promise<Void> startPromise) {
         this.vertx = vertx;
         this.idxWebhook = webhookConfig.getInteger("idx");
-        final String eventStoreConf = (String) vertx.sharedData().getLocalMap("server").get("event-store");
-        if (eventStoreConf != null) {
-            final JsonObject eventStoreConfig = new JsonObject(eventStoreConf);
-            this.platformId = eventStoreConfig.getString("platform");
+        SharedDataHelper.getInstance().<String, String>getMulti("server", "event-store")
+          .onSuccess(mapData -> {
+            final String eventStoreConf = mapData.get("event-store");
+            if (eventStoreConf != null) {
+              final JsonObject eventStoreConfig = new JsonObject(eventStoreConf);
+              this.platformId = eventStoreConfig.getString("platform");
 
-            final JsonObject eventStorePGConfig = eventStoreConfig.getJsonObject("postgresql");
-            if (eventStorePGConfig != null) {
+              final JsonObject eventStorePGConfig = eventStoreConfig.getJsonObject("postgresql");
+              if (eventStorePGConfig != null) {
                 final PgConnectOptions options = new PgConnectOptions().setPort(eventStorePGConfig.getInteger("port", 5432))
-                        .setHost(eventStorePGConfig.getString("host"))
-                        .setDatabase(eventStorePGConfig.getString("database"))
-                        .setUser(eventStorePGConfig.getString("user"))
-                        .setPassword(eventStorePGConfig.getString("password"));
+                  .setHost(eventStorePGConfig.getString("host"))
+                  .setDatabase(eventStorePGConfig.getString("database"))
+                  .setUser(eventStorePGConfig.getString("user"))
+                  .setPassword(eventStorePGConfig.getString("password"));
                 final PoolOptions poolOptions = new PoolOptions()
                   .setMaxSize(eventStorePGConfig.getInteger("pool-size", 5));
                 this.masterPgPool = PgPool.pool(vertx, options, poolOptions);
-            } else {
+              } else {
                 throw new ValidationException("invalid.configuration.postgresql");
-            }
-            final JsonObject eventStorePGSlaveConfig = eventStoreConfig.getJsonObject("postgresql-slave");
-            if (eventStorePGSlaveConfig != null) {
+              }
+              final JsonObject eventStorePGSlaveConfig = eventStoreConfig.getJsonObject("postgresql-slave");
+              if (eventStorePGSlaveConfig != null) {
                 final PgConnectOptions options = new PgConnectOptions()
-                        .setPort(eventStorePGSlaveConfig.getInteger("port", 5432))
-                        .setHost(eventStorePGSlaveConfig.getString("host"))
-                        .setDatabase(eventStorePGSlaveConfig.getString("database"))
-                        .setUser(eventStorePGSlaveConfig.getString("user"))
-                        .setPassword(eventStorePGSlaveConfig.getString("password"));
+                  .setPort(eventStorePGSlaveConfig.getInteger("port", 5432))
+                  .setHost(eventStorePGSlaveConfig.getString("host"))
+                  .setDatabase(eventStorePGSlaveConfig.getString("database"))
+                  .setUser(eventStorePGSlaveConfig.getString("user"))
+                  .setPassword(eventStorePGSlaveConfig.getString("password"));
                 final PoolOptions poolOptions = new PoolOptions()
                   .setMaxSize(eventStorePGConfig.getInteger("pool-size", 5));
                 this.slavePgPool = PgPool.pool(vertx, options, poolOptions);
-            } else {
+              } else {
                 this.slavePgPool = masterPgPool;
+              }
+            } else {
+              throw new ValidationException("invalid.configuration.eventstore");
             }
-        } else {
-            throw new ValidationException("invalid.configuration.eventstore");
-        }
 
-        final JsonObject httpWebhookConfig = webhookConfig.getJsonObject("http-webhook");
-        this.passwordEncryptKey = httpWebhookConfig.getString("password-encryption-secret");
-        this.timeout = httpWebhookConfig.getLong("timeout", 30000l);
-        this.baseUriPath = httpWebhookConfig.getString("base-uri-path");
-        this.authorizationHeader = "Basic " + httpWebhookConfig.getString("basic-header");
-        final HttpClientOptions options = new HttpClientOptions().setDefaultHost(httpWebhookConfig.getString("host"))
-                .setDefaultPort(httpWebhookConfig.getInteger("port")).setSsl(httpWebhookConfig.getBoolean("ssl", true))
-                .setMaxPoolSize(httpWebhookConfig.getInteger("pool-size", 5)).setConnectTimeout((int) timeout)
-                .setKeepAlive(httpWebhookConfig.getBoolean("keep-alive", true));
-        httpClient = vertx.createHttpClient(options);
+            final JsonObject httpWebhookConfig = webhookConfig.getJsonObject("http-webhook");
+            this.passwordEncryptKey = httpWebhookConfig.getString("password-encryption-secret");
+            this.timeout = httpWebhookConfig.getLong("timeout", 30000l);
+            this.baseUriPath = httpWebhookConfig.getString("base-uri-path");
+            this.authorizationHeader = "Basic " + httpWebhookConfig.getString("basic-header");
+            final HttpClientOptions options = new HttpClientOptions().setDefaultHost(httpWebhookConfig.getString("host"))
+              .setDefaultPort(httpWebhookConfig.getInteger("port")).setSsl(httpWebhookConfig.getBoolean("ssl", true))
+              .setMaxPoolSize(httpWebhookConfig.getInteger("pool-size", 5)).setConnectTimeout((int) timeout)
+              .setKeepAlive(httpWebhookConfig.getBoolean("keep-alive", true));
+            httpClient = vertx.createHttpClient(options);
 
-        final JsonArray filterEventTypes = webhookConfig.getJsonArray("only-types", new JsonArray().add("PASSWORD").add("DELETED"));
-        if (filterEventTypes != null && !filterEventTypes.isEmpty()) {
-            filterEventType = "AND event_type IN " + filterEventTypes.stream()
-                    .map(Object::toString).collect(Collectors.joining("','", "('", "')"));
-        } else {
-            filterEventType = "";
-        }
+            final JsonArray filterEventTypes = webhookConfig.getJsonArray("only-types", new JsonArray().add("PASSWORD").add("DELETED"));
+            if (filterEventTypes != null && !filterEventTypes.isEmpty()) {
+              filterEventType = "AND event_type IN " + filterEventTypes.stream()
+                .map(Object::toString).collect(Collectors.joining("','", "('", "')"));
+            } else {
+              filterEventType = "";
+            }
 
-        final JsonArray profiles = webhookConfig.getJsonArray("profiles", new JsonArray().add("Teacher").add("Personnel").add("Student").add("Guest"));
-        if (profiles != null && !profiles.isEmpty()) {
-            filterProfiles = "AND profile IN " + profiles.stream()
-                    .map(Object::toString).collect(Collectors.joining("','", "('", "') "));
-        } else {
-            filterProfiles = "";
-        }
+            final JsonArray profiles = webhookConfig.getJsonArray("profiles", new JsonArray().add("Teacher").add("Personnel").add("Student").add("Guest"));
+            if (profiles != null && !profiles.isEmpty()) {
+              filterProfiles = "AND profile IN " + profiles.stream()
+                .map(Object::toString).collect(Collectors.joining("','", "('", "') "));
+            } else {
+              filterProfiles = "";
+            }
 
-        batchSize = webhookConfig.getInteger("batch-size", 1000);
+            batchSize = webhookConfig.getInteger("batch-size", 1000);
+          })
+          .onFailure(th -> {
+            log.error("An error occurred while initializing SyncAD", th);
+            startPromise.fail(th);
+          });
     }
 
     @Override
