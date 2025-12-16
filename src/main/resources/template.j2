@@ -1,0 +1,18 @@
+{
+  "name": "fr.openent~sqool",
+  "config": {
+    "main": "fr.openent.sqool.Sqool",
+    "port": 8057,
+    "host": "https://{{ host }}",
+    "ssl": true,
+    "auto-redeploy": false,
+    "userbook-host": "https://{{ host }}",
+    {% if sqoolApiAdditionalAttributes is defined %}
+      "apiAdditionalAttributes": {{ sqoolApiAdditionalAttributes }},
+    {% endif %}
+    {% if (ha is defined and not(ha)) or (inventory_hostname_short is defined and inventory_hostname_short == 'jobs') %}
+      "webhooks" : {{ sqoolWebhooks|default('[]') }},
+    {% endif %}
+    "mode": "prod"
+  }
+}
