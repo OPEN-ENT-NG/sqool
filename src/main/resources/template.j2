@@ -2,6 +2,10 @@
   "name": "fr.openent~sqool",
   "config": {
     "main": "fr.openent.sqool.Sqool",
+    "probes": [
+      "org.entcore.common.http.health.Neo4jProbe",
+      "org.entcore.common.http.health.MongoProbe"
+    ],
     "port": 8057,
     "host": "https://{{ host }}",
     "ssl": true,
