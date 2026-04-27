@@ -10,6 +10,7 @@
     "host": "https://{{ host }}",
     "app-address": "/sqool",
     "ssl": true,
+    {% if overrideTheme %} "override-theme": {{ override2d }}, {% endif %}
     "auto-redeploy": false,
     "userbook-host": "https://{{ host }}",
     {% if sqoolApiAdditionalAttributes is defined %}
