@@ -24,7 +24,7 @@
     </repository>
   </repositories>
   <properties>
-    <entCoreVersion>6.16-develop-enabling-SNAPSHOT</entCoreVersion>
+    <entCoreVersion>6.16-SNAPSHOT</entCoreVersion>
     <vertxCronTimerVersion>3.0-SNAPSHOT</vertxCronTimerVersion>
     <junitVersion>4.13.2</junitVersion>
     <modJsonSchemaValidatorVersion>2.2-SNAPSHOT</modJsonSchemaValidatorVersion>
